@@ -1,0 +1,230 @@
+esphome:
+  name: cyd-tictactoe
+  friendly_name: CYD Tic-Tac-Toe
+  on_boot:
+    priority: -10
+    then:
+      - light.turn_on:
+          id: back_light
+          brightness: 80%
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    id: back_light
+
+output:
+  - platform: ledc
+    pin: 27
+    id: backlight_pwm
+
+spi:
+  clk_pin: 14
+  mosi_pin: 13
+  miso_pin: 12
+
+touchscreen:
+  - platform: xpt2046
+    id: my_touch
+    cs_pin: 33
+    interrupt_pin: 36
+    update_interval: 50ms
+    threshold: 400
+    calibration: {x_min: 250, x_max: 3800, y_min: 250, y_max: 3800}
+    transform: 
+      swap_xy: false
+      mirror_x: true 
+
+display:
+  - platform: ili9xxx
+    model: ILI9341
+    id: main_display
+    dc_pin: 2
+    cs_pin: 15
+    color_palette: 8BIT
+    invert_colors: True
+    rotation: 0 
+
+globals:
+  - id: current_player
+    type: int 
+    initial_value: '1'
+  - id: game_active
+    type: bool
+    initial_value: 'true'
+  - id: board_state
+    type: int[9] 
+    initial_value: '{0,0,0,0,0,0,0,0,0}'
+
+script:
+  - id: handle_move
+    parameters:
+      idx: int
+    then:
+      - lambda: |-
+          if (!id(game_active) || id(board_state)[idx] != 0) return;
+          id(board_state)[idx] = id(current_player);
+          lv_obj_t* btns[] = {id(b0), id(b1), id(b2), id(b3), id(b4), id(b5), id(b6), id(b7), id(b8)};
+          lv_label_set_text(lv_obj_get_child(btns[idx], 0), id(current_player) == 1 ? "X" : "O");
+          
+          int wins[8][3] = {{0,1,2},{3,4,5},{6,7,8},{0,3,6},{1,4,7},{2,5,8},{0,4,8},{2,4,6}};
+          int win_idx = -1;
+          for(int i=0; i<8; i++) {
+            if (id(board_state)[wins[i][0]] != 0 && 
+                id(board_state)[wins[i][0]] == id(board_state)[wins[i][1]] && 
+                id(board_state)[wins[i][1]] == id(board_state)[wins[i][2]]) {
+              win_idx = i;
+              break;
+            }
+          }
+          if (win_idx != -1) {
+            id(game_active) = false;
+            lv_label_set_text(id(msg_label), id(current_player) == 1 ? "Player X\nWins!" : "Player O\nWins!");
+            lv_color_t yellow = lv_color_hex(0xFFFF00);
+            lv_obj_set_style_bg_color(btns[wins[win_idx][0]], yellow, LV_PART_MAIN);
+            lv_obj_set_style_bg_color(btns[wins[win_idx][1]], yellow, LV_PART_MAIN);
+            lv_obj_set_style_bg_color(btns[wins[win_idx][2]], yellow, LV_PART_MAIN);
+            id(reset_game_script).execute();
+            return;
+          }
+          bool full = true;
+          for(int i=0; i<9; i++) if(id(board_state)[i] == 0) full = false;
+          if (full) {
+            id(game_active) = false;
+            lv_label_set_text(id(msg_label), "Draw\nGame Over");
+            id(reset_game_script).execute();
+            return;
+          }
+          id(current_player) = (id(current_player) == 1) ? 2 : 1;
+          lv_label_set_text(id(msg_label), id(current_player) == 1 ? "Player X\npick a square" : "Player O\npick a square");
+
+  - id: reset_game_script
+    mode: restart
+    then:
+      - delay: 5s
+      - lambda: |-
+          for(int i=0; i<9; i++) id(board_state)[i] = 0;
+          id(current_player) = 1;
+          id(game_active) = true;
+          lv_label_set_text(id(msg_label), "Player X\npick a square");
+          lv_obj_t* btns[] = {id(b0), id(b1), id(b2), id(b3), id(b4), id(b5), id(b6), id(b7), id(b8)};
+          lv_color_t def_color = lv_color_hex(0x2196F3); 
+          for(auto b : btns) {
+            lv_label_set_text(lv_obj_get_child(b, 0), " ");
+            lv_obj_set_style_bg_color(b, def_color, LV_PART_MAIN);
+          }
+
+lvgl:
+  displays: main_display
+  touchscreens: my_touch
+  widgets:
+    - obj:
+        id: screen_cont
+        height: 320
+        width: 240
+        widgets:
+          - label:
+              id: msg_label
+              text: "Player X\npick a square"
+              align: TOP_MID
+              y: 15
+              text_font: montserrat_20
+              text_align: CENTER
+
+          # Grid Buttons Shifted 4px left (Previous x was 15, 87, 159)
+          - button:
+              id: b0
+              x: 0
+              y: 80
+              width: 65
+              height: 65
+              widgets: [{label: {text: " ", align: CENTER, text_font: montserrat_48}}]
+              on_click: { then: [script.execute: { id: handle_move, idx: 0 }] }
+          - button:
+              id: b1
+              x: 72
+              y: 80
+              width: 65
+              height: 65
+              widgets: [{label: {text: " ", align: CENTER, text_font: montserrat_48}}]
+              on_click: { then: [script.execute: { id: handle_move, idx: 1 }] }
+          - button:
+              id: b2
+              x: 144
+              y: 80
+              width: 65
+              height: 65
+              widgets: [{label: {text: " ", align: CENTER, text_font: montserrat_48}}]
+              on_click: { then: [script.execute: { id: handle_move, idx: 2 }] }
+          
+          - button:
+              id: b3
+              x: 0
+              y: 152
+              width: 65
+              height: 65
+              widgets: [{label: {text: " ", align: CENTER, text_font: montserrat_48}}]
+              on_click: { then: [script.execute: { id: handle_move, idx: 3 }] }
+          - button:
+              id: b4
+              x: 72
+              y: 152
+              width: 65
+              height: 65
+              widgets: [{label: {text: " ", align: CENTER, text_font: montserrat_48}}]
+              on_click: { then: [script.execute: { id: handle_move, idx: 4 }] }
+          - button:
+              id: b5
+              x: 144
+              y: 152
+              width: 65
+              height: 65
+              widgets: [{label: {text: " ", align: CENTER, text_font: montserrat_48}}]
+              on_click: { then: [script.execute: { id: handle_move, idx: 5 }] }
+          
+          - button:
+              id: b6
+              x: 0
+              y: 224
+              width: 65
+              height: 65
+              widgets: [{label: {text: " ", align: CENTER, text_font: montserrat_48}}]
+              on_click: { then: [script.execute: { id: handle_move, idx: 6 }] }
+          - button:
+              id: b7
+              x: 72
+              y: 224
+              width: 65
+              height: 65
+              widgets: [{label: {text: " ", align: CENTER, text_font: montserrat_48}}]
+              on_click: { then: [script.execute: { id: handle_move, idx: 7 }] }
+          - button:
+              id: b8
+              x: 144
+              y: 224
+              width: 65
+              height: 65
+              widgets: [{label: {text: " ", align: CENTER, text_font: montserrat_48}}]
+              on_click: { then: [script.execute: { id: handle_move, idx: 8 }] }
+
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          static bool locked = false;
+          if (!locked && id(screen_cont) != nullptr) {
+            lv_obj_clear_flag(id(screen_cont), LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_t* btns[] = {id(b0), id(b1), id(b2), id(b3), id(b4), id(b5), id(b6), id(b7), id(b8)};
+            for(auto b : btns) {
+              lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+            }
+            locked = true;
+          }
